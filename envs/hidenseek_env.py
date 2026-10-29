@@ -1,6 +1,7 @@
 import gymnasium as gym
 from gymnasium import spaces
 import pygame
+from collections import deque
 import numpy as np
 
 class HideAndSeekEnv(gym.Env):
@@ -147,17 +148,27 @@ class HideAndSeekEnv(gym.Env):
         # Termination & Rewards
         terminated = False
         truncated = False
-
+        
+            # 1. Check if Seeker caught Hider
         if np.array_equal(self.hider_pos, self.seeker_pos) and self.phase == 1:
             terminated = True
-            reward -= 10.0 # Penalty for being caught.
+            reward -= 10.0 # Caught penalty
+            print("Seeker caught the Hider! Episode Over.")
+            
+            # 2. Check if Hider successfully barricaded themselves (No valid path)
+        elif not self._has_path_to_hider():
+            terminated = True
+            # Award the +100 win bonus PLUS the remaining survival step points 
+            # so the RL agent isn't incentivized to stall before locking the final block
+            remaining_steps = max(0, 200 - self.current_step)
+            reward += 100.0 + remaining_steps
+            print("No valid path for Seeker! Hider wins by barricade!")
 
-        if self.current_step >= 200:
+            # 3. Check if max steps reached
+        elif self.current_step >= 200:
             truncated = True
-            reward += 100.0 # Reward for surviving the chase.
-
-        if self.render_mode == "human":
-            self.render()
+            reward += 100.0 # Survival bonus
+            print("Max steps reached! Hider survives!")
 
         return self._get_obs(), reward, terminated, truncated, self._get_info()
 
@@ -246,7 +257,7 @@ class HideAndSeekEnv(gym.Env):
                 (pix_square_size * x, self.window_size),
             )
 
-        # Apply Phase Visuals (Optional visual feedback for testing).
+        # Apply Phase Visuals
         if self.phase == 0:
             # Draw a subtle green border during Preparation Phase
             pygame.draw.rect(canvas, (0, 255, 0), canvas.get_rect(), 5)
@@ -281,3 +292,43 @@ class HideAndSeekEnv(gym.Env):
     def _get_info(self):
         # Helper to return debugging & metrics.
         return {"current_step": self.current_step}
+
+    def _is_valid_position(self, pos):
+        # 1. Check Grid Boundaries
+        if pos[0] < 0 or pos[0] >= self.grid_size or pos[1] < 0 or pos[1] >= self.grid_size:
+            return False
+            
+        # 2. Check Locked Blocks (Impassable obstacles)
+        for block in self.blocks:
+            if block[3] == 1: # If is_locked is True
+                if np.array_equal(pos, block[:2]):
+                    return False
+                    
+        return True
+
+    def _has_path_to_hider(self):
+        # If the Hider is still standing on top of a locked block, wait until they step off
+        if not self._is_valid_position(self.hider_pos):
+            return True
+
+        start = tuple(self.seeker_pos)
+        target = tuple(self.hider_pos)
+        
+        queue = deque([start])
+        visited = {start}
+        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        
+        while queue:
+            curr_x, curr_y = queue.popleft()
+            if (curr_x, curr_y) == target:
+                return True
+                
+            for dx, dy in directions:
+                next_pos = np.array([curr_x + dx, curr_y + dy])
+                next_tuple = (int(next_pos[0]), int(next_pos[1]))
+                
+                if next_tuple not in visited and self._is_valid_position(next_pos):
+                    visited.add(next_tuple)
+                    queue.append(next_tuple)
+                    
+        return False

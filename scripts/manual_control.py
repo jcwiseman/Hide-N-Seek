@@ -36,7 +36,6 @@ clock = pygame.time.Clock()
 
 while running: 
     
-    # ADD THIS LINE: Forces the game window to draw continuously 
     env.render() 
     
     for event in pygame.event.get():
